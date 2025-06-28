@@ -1,0 +1,19 @@
+meta {
+  name: login
+  type: http
+  seq: 1
+}
+
+post {
+  url: http://192.168.31.226:8000/login
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {"username":"testuser","password":"testpass"}
+}

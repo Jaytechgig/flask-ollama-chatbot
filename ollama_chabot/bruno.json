@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "ollama_chabot",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}
