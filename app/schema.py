@@ -3,7 +3,7 @@
 import bcrypt
 import ollama
 from ariadne import QueryType, MutationType, make_executable_schema
-from models import db, User, ChatHistory
+from app.models import db, User, ChatHistory
 
 MODEL_NAME = "my-chat"
 
