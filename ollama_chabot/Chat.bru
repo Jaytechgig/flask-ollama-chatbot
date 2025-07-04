@@ -1,7 +1,7 @@
 meta {
-  name: Login
+  name: Chat
   type: graphql
-  seq: 2
+  seq: 3
 }
 
 post {
@@ -12,9 +12,8 @@ post {
 
 body:graphql {
   mutation {
-    login(username: "testuser", password: "secret123") {
-      success
-      message
+    chat(username: "testuser", message: "Hello Tintu!") {
+      reply
     }
   }
   

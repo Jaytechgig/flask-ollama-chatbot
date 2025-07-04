@@ -1,5 +1,5 @@
 meta {
-  name: Login
+  name: Register
   type: graphql
   seq: 2
 }
@@ -12,7 +12,7 @@ post {
 
 body:graphql {
   mutation {
-    login(username: "testuser", password: "secret123") {
+    register(username: "testuser", password: "secret123") {
       success
       message
     }
