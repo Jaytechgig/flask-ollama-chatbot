@@ -14,6 +14,11 @@ db.init_app(my_app)
 with my_app.app_context():
     db.create_all()
 
+@my_app.route("/")
+def index():
+    return "✅ Hello, your Flask dev server is running!"
+
+
 @my_app.route("/graphql", methods=["GET"])
 def graphql_playground():
     return PLAYGROUND_HTML, 200
