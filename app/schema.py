@@ -1,16 +1,29 @@
 # schema.py
-
+import os
 import bcrypt
 import ollama
-from ariadne import QueryType, MutationType, make_executable_schema
+import fitz  # PyMuPDF
+
+from ariadne import (
+    QueryType,
+    MutationType,
+    ScalarType,
+    make_executable_schema
+)
 from app.models import db, User, ChatHistory
 
+# ==========
+# Constants
+# ==========
 MODEL_NAME = "my-chat"
+MAX_PDF_SIZE = 5 * 1024 * 1024  # 5MB
 
-# ==================
-# GraphQL type defs
-# ==================
+# ==========
+# Type Definitions
+# ==========
 type_defs = """
+    scalar Upload
+
     type Query {
         getUser(username: String!): User
     }
@@ -19,6 +32,7 @@ type_defs = """
         register(username: String!, password: String!): RegisterResponse!
         login(username: String!, password: String!): LoginResponse!
         chat(username: String!, message: String!): ChatResponse!
+        extractPDFText(file: Upload!): PDFExtractionResult!
     }
 
     type User {
@@ -39,25 +53,38 @@ type_defs = """
     type ChatResponse {
         reply: String!
     }
+
+    type PDFPage {
+        page: Int!
+        content: String!
+        preview: String
+    }
+
+    type PDFExtractionResult {
+        success: Boolean!
+        filename: String!
+        page_count: Int!
+        pages: [PDFPage!]!
+    }
 """
 
-# ==================
+# ==========
 # Resolvers
-# ==================
+# ==========
 query = QueryType()
 mutation = MutationType()
+upload_scalar = ScalarType("Upload")
 
 @query.field("getUser")
 def resolve_get_user(_, info, username):
-    user = User.query.filter_by(username=username).first()
-    return user
+    return User.query.filter_by(username=username).first()
 
 @mutation.field("register")
 def resolve_register(_, info, username, password):
     if User.query.filter_by(username=username).first():
         return {"success": False, "message": "Username exists"}
-    pw_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
-    new_user = User(username=username, password_hash=pw_hash.decode('utf-8'))
+    pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    new_user = User(username=username, password_hash=pw_hash)
     db.session.add(new_user)
     db.session.commit()
     return {"success": True, "message": "Registered!"}
@@ -66,11 +93,10 @@ def resolve_register(_, info, username, password):
 def resolve_login(_, info, username, password):
     user = User.query.filter_by(username=username).first()
     if not user:
-        return {"success": False, "message": "Invalid credentials"}
-    if bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
+        return {"success": False, "message": "Login failed"}
+    if bcrypt.checkpw(password.encode(), user.password_hash.encode()):
         return {"success": True, "message": "Login successful"}
-    else:
-        return {"success": False, "message": "Invalid credentials"}
+    return {"success": False, "message": "Login failed"}
 
 @mutation.field("chat")
 def resolve_chat(_, info, username, message):
@@ -78,21 +104,62 @@ def resolve_chat(_, info, username, message):
     if not user:
         return {"reply": "Invalid user"}
 
-    # Load recent history
     history = ChatHistory.query.filter_by(user_id=user.id).order_by(ChatHistory.id.desc()).limit(5).all()
-    messages = [{"role": "system", "content": "You are Tintu 🧸, helpful bot."}]
-    for h in reversed(history):
-        messages.append({"role": h.role, "content": h.content})
+    messages = [{"role": "system", "content": "You are Tintu 🧸, a helpful bot."}]
+    messages += [{"role": h.role, "content": h.content} for h in reversed(history)]
     messages.append({"role": "user", "content": message})
 
-    response = ollama.chat(model=MODEL_NAME, messages=messages)
-    bot_reply = response["message"]["content"]
+    try:
+        response = ollama.chat(model=MODEL_NAME, messages=messages)
+        bot_reply = response["message"]["content"]
+    except Exception:
+        bot_reply = "Sorry, something went wrong while generating a reply."
 
-    # Save both
     db.session.add(ChatHistory(user_id=user.id, role="user", content=message))
     db.session.add(ChatHistory(user_id=user.id, role="assistant", content=bot_reply))
     db.session.commit()
 
     return {"reply": bot_reply}
 
-schema = make_executable_schema(type_defs, query, mutation)
+@mutation.field("extractPDFText")
+def resolve_extract_pdf_text(_, info, file):
+    file_obj = file  # Werkzeug FileStorage
+    filename = file_obj.filename
+
+    if not filename.lower().endswith(".pdf"):
+        return {"success": False, "filename": filename, "page_count": 0, "pages": []}
+
+    file_obj.seek(0, os.SEEK_END)
+    size = file_obj.tell()
+    file_obj.seek(0)
+
+    if size > MAX_PDF_SIZE:
+        return {"success": False, "filename": filename, "page_count": 0, "pages": []}
+
+    try:
+        pdf_bytes = file_obj.read()
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception:
+        return {"success": False, "filename": filename, "page_count": 0, "pages": []}
+
+    pages = []
+    for i, page in enumerate(doc, start=1):
+        content = page.get_text().strip()
+        pages.append({
+            "page": i,
+            "content": content,
+            "preview": content[:100]
+        })
+    doc.close()
+
+    return {
+        "success": True,
+        "filename": filename,
+        "page_count": len(pages),
+        "pages": pages
+    }
+
+# ==========
+# Schema
+# ==========
+schema = make_executable_schema(type_defs, [query, mutation, upload_scalar])
