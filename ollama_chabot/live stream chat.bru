@@ -1,0 +1,18 @@
+meta {
+  name: live stream chat
+  type: http
+  seq: 5
+}
+
+post {
+  url: http://192.168.31.226:8001/stream-chat
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "username": "testuser",
+    "message": "How are you"
+  }
+}
