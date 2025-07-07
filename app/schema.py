@@ -3,20 +3,36 @@ import os
 import bcrypt
 import ollama
 import fitz  # PyMuPDF
-
+import torch
+from torchvision import transforms
+from PIL import Image
+from app.models import db, User, ChatHistory
+from app.style_transfer import run_style_transfer
 from ariadne import (
     QueryType,
     MutationType,
     ScalarType,
     make_executable_schema
 )
-from app.models import db, User, ChatHistory
 
-# ==========
+# ========
 # Constants
-# ==========
+# ========
 MODEL_NAME = "my-chat"
 MAX_PDF_SIZE = 5 * 1024 * 1024  # 5MB
+
+UPLOAD_DIR = "./uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# Load your CNN style models once for efficiency
+from app.transformer_net import TransformerNet  # Import your fast style transfer model
+
+STYLE_MODELS = {
+    "mosaic": "mosaic.pth",
+    "candy": "candy.pth",
+    "udnie": "udnie.pth"
+    # Add more styles as needed
+}
 
 # ==========
 # Type Definitions
@@ -33,6 +49,7 @@ type_defs = """
         login(username: String!, password: String!): LoginResponse!
         chat(username: String!, message: String!): ChatResponse!
         extractPDFText(file: Upload!): PDFExtractionResult!
+        styleTransfer(file: Upload!, style: String!): StyleTransferResult!
     }
 
     type User {
@@ -65,6 +82,11 @@ type_defs = """
         filename: String!
         page_count: Int!
         pages: [PDFPage!]!
+    }
+
+    type StyleTransferResult {
+        imageUrl: String!
+        message: String
     }
 """
 
@@ -104,15 +126,30 @@ def resolve_chat(_, info, username, message):
     if not user:
         return {"reply": "Invalid user"}
 
-    history = ChatHistory.query.filter_by(user_id=user.id).order_by(ChatHistory.id.desc()).limit(5).all()
+    # Tight context: last 2 messages
+    history = ChatHistory.query.filter_by(user_id=user.id).order_by(ChatHistory.id.desc()).limit(2).all()
     messages = [{"role": "system", "content": "You are Tintu 🧸, a helpful bot."}]
     messages += [{"role": h.role, "content": h.content} for h in reversed(history)]
     messages.append({"role": "user", "content": message})
 
     try:
-        response = ollama.chat(model=MODEL_NAME, messages=messages)
-        bot_reply = response["message"]["content"]
-    except Exception:
+        stream = ollama.chat(
+            model=MODEL_NAME,
+            messages=messages,
+            stream=True,
+            options={
+                "num_predict": 200,
+                "temperature": 0.7
+            }
+        )
+
+        chunks = []
+        for chunk in stream:
+            chunks.append(chunk['message']['content'])
+        bot_reply = "".join(chunks)
+
+    except Exception as e:
+        print(f"Ollama stream error: {e}")
         bot_reply = "Sorry, something went wrong while generating a reply."
 
     db.session.add(ChatHistory(user_id=user.id, role="user", content=message))
@@ -123,7 +160,7 @@ def resolve_chat(_, info, username, message):
 
 @mutation.field("extractPDFText")
 def resolve_extract_pdf_text(_, info, file):
-    file_obj = file  # Werkzeug FileStorage
+    file_obj = file
     filename = file_obj.filename
 
     if not filename.lower().endswith(".pdf"):
@@ -158,6 +195,35 @@ def resolve_extract_pdf_text(_, info, file):
         "page_count": len(pages),
         "pages": pages
     }
+
+# ==========
+# CNN Style Transfer Resolver
+# ==========
+@mutation.field("styleTransfer")
+def resolve_style_transfer(_, info, file, style):
+    file_obj = file
+    filename = file_obj.filename
+
+    # Save uploaded file
+    input_path = os.path.join(UPLOAD_DIR, filename)
+    file_obj.seek(0)
+    with open(input_path, "wb") as f:
+        f.write(file_obj.read())
+
+    # Output path
+    output_filename = f"stylized_{style}_{filename}"
+    output_path = os.path.join(UPLOAD_DIR, output_filename)
+
+    # Call reusable helper
+    try:
+        run_style_transfer(input_path, output_path, style)
+        image_url = f"/uploads/{output_filename}"
+        message = f"Your image is stylized with {style}!"
+    except Exception as e:
+        image_url = ""
+        message = f"Style transfer failed: {e}"
+
+    return {"imageUrl": image_url, "message": message}
 
 # ==========
 # Schema
