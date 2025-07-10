@@ -88,6 +88,16 @@ type_defs = """
         imageUrl: String!
         message: String
     }
+    type ChatMessage {
+        id: Int!
+        role: String!
+        content: String!
+    }
+
+    extend type Query {
+        getChatHistory(username: String!): [ChatMessage!]!
+    }
+
 """
 
 # ==========
@@ -224,6 +234,15 @@ def resolve_style_transfer(_, info, file, style):
         message = f"Style transfer failed: {e}"
 
     return {"imageUrl": image_url, "message": message}
+
+@query.field("getChatHistory")
+def resolve_get_chat_history(_, info, username):
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return []
+    history = ChatHistory.query.filter_by(user_id=user.id).order_by(ChatHistory.id.asc()).all()
+    return [{"id": h.id, "role": h.role, "content": h.content} for h in history]
+
 
 # ==========
 # Schema
