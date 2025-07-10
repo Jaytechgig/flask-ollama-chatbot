@@ -1,0 +1,22 @@
+meta {
+  name: ChatHistory
+  type: graphql
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}
+  body: graphql
+  auth: inherit
+}
+
+body:graphql {
+  query {
+    getChatHistory(username: "testuser1") {
+      id
+      role
+      content
+    }
+  }
+  
+}
