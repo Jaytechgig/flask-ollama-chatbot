@@ -12,12 +12,13 @@ post {
 
 body:graphql {
   query {
-    getChatHistory(username: "testuser") {
+    getChatHistory(user_id: 1) {
       id
       role
       content
       created_at
       updated_at
+      chat_id
     }
   }
   

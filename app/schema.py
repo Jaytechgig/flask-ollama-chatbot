@@ -43,7 +43,7 @@ type_defs = """
     type Query {
         getUser(username: String!): User
         semanticSearch(query: String!, username: String!): [SemanticSearchResult!]!
-        getChatHistory(username: String!): [ChatMessage!]!
+        getChatHistory(user_id: Int!): [ChatMessage!]!
     }
 
     type Mutation {
@@ -104,6 +104,7 @@ type_defs = """
         content: String!
         created_at: DateTime
         updated_at: DateTime
+        chat_id: String!
     }
 
     type SemanticSearchResult {
@@ -250,12 +251,12 @@ def resolve_semantic_search(_, info, username, query):
     return semantic_results
 
 @query.field("getChatHistory")
-def resolve_get_chat_history(_, info, username):
-    user = User.query.filter_by(username=username).first()
+def resolve_get_chat_history(_, info, user_id):
+    user = User.query.filter_by(id=user_id).first()
     if not user:
         return []
-    history = ChatHistory.query.filter_by(user_id=user.id).order_by(ChatHistory.id.asc()).all()
-    return [{"id": h.id, "role": h.role, "content": h.content, "created_at": h.created_at, "updated_at": h.updated_at} for h in history]
+    history = ChatHistory.query.filter_by(user_id=user_id).order_by(ChatHistory.id.asc()).all()
+    return [{"id": h.id, "role": h.role, "content": h.content, "created_at": h.created_at, "updated_at": h.updated_at, "chat_id": h.chat_id} for h in history]
 
 @mutation.field("styleTransfer")
 def resolve_style_transfer(_, info, file, style):
