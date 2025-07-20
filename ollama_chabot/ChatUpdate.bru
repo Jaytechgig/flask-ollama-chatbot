@@ -1,0 +1,21 @@
+meta {
+  name: ChatUpdate
+  type: graphql
+  seq: 8
+}
+
+post {
+  url: {{baseurl}}
+  body: graphql
+  auth: inherit
+}
+
+body:graphql {
+  mutation {
+    chat_update(user_id: 1, chat_id: "abc-123-cdjggje") {
+      success
+      message
+    }
+  }
+  
+}
