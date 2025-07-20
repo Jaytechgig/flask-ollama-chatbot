@@ -68,6 +68,7 @@ type_defs = """
     type LoginResponse {
         success: Boolean!
         message: String!
+        user_id: Int
     }
 
     type ChatResponse {
@@ -145,8 +146,13 @@ def resolve_login(_, info, username, password):
     if not user:
         return {"success": False, "message": "Login failed"}
     if bcrypt.checkpw(password.encode(), user.password_hash.encode()):
-        return {"success": True, "message": "Login successful"}
+        return {
+            "success": True,
+            "message": "Login successful",
+            "user_id": user.id  # ✅ field name matches schema
+        }
     return {"success": False, "message": "Login failed"}
+
 
 @mutation.field("chat")
 def resolve_chat(_, info, username, message):
