@@ -148,7 +148,7 @@ def stream_chat():
                 db.session.rollback()
                 yield f"data: Error saving chat: {str(db_error)}\n\n"
 
-            yield "data: [DONE]\n\n"
+            yield "data: DONE\n\n"
 
     headers = {
         "Content-Type": "text/event-stream",

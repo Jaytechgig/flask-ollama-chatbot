@@ -104,7 +104,7 @@ type_defs = """
         content: String!
         created_at: DateTime
         updated_at: DateTime
-        chat_id: String!
+        chat_id: String
     }
 
     type SemanticSearchResult {
