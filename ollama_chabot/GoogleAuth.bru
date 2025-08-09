@@ -1,0 +1,25 @@
+meta {
+  name: GoogleAuth
+  type: graphql
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}
+  body: graphql
+  auth: inherit
+}
+
+body:graphql {
+  mutation GoogleAuth($token: String!) {
+    googleAuth(token: $token) {
+      accessToken
+      user {
+        id
+        email
+        name
+      }
+    }
+  }
+  
+}

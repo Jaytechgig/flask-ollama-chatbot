@@ -22,6 +22,10 @@ from ariadne import (
     make_executable_schema
 )
 
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+from flask_jwt_extended import create_access_token
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -53,6 +57,7 @@ type_defs = """
         chat_update(user_id: Int!, chat_id: String!): ChatUpdateResponse!
         extractPDFText(username: String!, file: Upload!): PDFExtractionResult!
         styleTransfer(file: Upload!, style: String!): StyleTransferResult!
+        googleAuth(token: String!): AuthPayload!
     }
 
     type User {
@@ -114,6 +119,11 @@ type_defs = """
         content: String
         score: Float!
     }
+    type AuthPayload {
+        accessToken: String!
+        user: User
+    }
+
 """
 
 query = QueryType()
@@ -270,5 +280,39 @@ def resolve_style_transfer(_, info, file, style):
         return {"imageUrl": f"/uploads/{output_filename}", "message": f"Styled with {style}"}
     except Exception as e:
         return {"imageUrl": "", "message": f"Failed: {e}"}
+
+
+
+
+def resolve_google_auth(_, info, token):
+    try:
+        idinfo = id_token.verify_oauth2_token(token, google_requests.Request(), YOUR_GOOGLE_CLIENT_ID)
+        email = idinfo.get("email")
+        name = idinfo.get("name")
+        google_user_id = idinfo["sub"]
+
+        if not email:
+            raise Exception("Google token missing email")
+
+        # Query or create user in your DB (adjust according to your User model and session)
+        user = User.query.filter_by(email=email).first()
+        if not user:
+            user = User(email=email, google_user_id=google_user_id, name=name)
+            db.session.add(user)
+            db.session.commit()
+        else:
+            user.name = name
+            user.google_user_id = google_user_id
+            db.session.commit()
+
+        access_token = create_access_token(identity=user.id)
+
+        return {
+            "accessToken": access_token,
+            "user": user
+        }
+    except ValueError:
+        raise Exception("Invalid Google token")
+
 
 schema = make_executable_schema(type_defs, [query, mutation, upload_scalar, datetime_scalar])
