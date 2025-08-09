@@ -25,6 +25,7 @@ from ariadne import (
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from flask_jwt_extended import create_access_token
+from graphql import GraphQLError
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -33,6 +34,7 @@ MODEL_NAME = "my-chat"
 MAX_PDF_SIZE = 5 * 1024 * 1024
 UPLOAD_DIR = "./uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+YOUR_GOOGLE_CLIENT_ID = "769932905390-fr661f2ug6om3nl3k9snu0uatthph04i.apps.googleusercontent.com"
 
 STYLE_MODELS = {
     "mosaic": "mosaic.pth",
@@ -61,8 +63,11 @@ type_defs = """
     }
 
     type User {
-        id: Int!
-        username: String!
+        id: ID!
+        username: String
+        email: String
+        name: String
+        profile_pic: String
     }
 
     type RegisterResponse {
@@ -123,7 +128,6 @@ type_defs = """
         accessToken: String!
         user: User
     }
-
 """
 
 query = QueryType()
@@ -131,15 +135,18 @@ mutation = MutationType()
 upload_scalar = ScalarType("Upload")
 datetime_scalar = ScalarType("DateTime")
 
+
 @datetime_scalar.serializer
 def serialize_datetime(value):
     if isinstance(value, datetime):
         return value.isoformat()
     return value
 
+
 @query.field("getUser")
 def resolve_get_user(_, info, username):
     return User.query.filter_by(username=username).first()
+
 
 @mutation.field("register")
 def resolve_register(_, info, username, password):
@@ -151,6 +158,7 @@ def resolve_register(_, info, username, password):
     db.session.commit()
     return {"success": True, "message": "Registered!"}
 
+
 @mutation.field("login")
 def resolve_login(_, info, username, password):
     user = User.query.filter_by(username=username).first()
@@ -160,7 +168,7 @@ def resolve_login(_, info, username, password):
         return {
             "success": True,
             "message": "Login successful",
-            "user_id": user.id  # ✅ field name matches schema
+            "user_id": user.id  # matching schema field
         }
     return {"success": False, "message": "Login failed"}
 
@@ -195,11 +203,11 @@ def resolve_chat(_, info, username, message):
 
     return {"reply": bot_reply}
 
+
 @mutation.field("chat_update")
 def resolve_chat(_, info, user_id, chat_id):
     try:
-        chats_to_update = ChatHistory.query.filter_by(user_id=user_id)
-        chats_to_update = chats_to_update.filter(ChatHistory.chat_id.is_(None)).all()
+        chats_to_update = ChatHistory.query.filter_by(user_id=user_id).filter(ChatHistory.chat_id.is_(None)).all()
         if not chats_to_update:
             return {"success": False, "message": "No chats with null chat_id found."}
 
@@ -211,12 +219,9 @@ def resolve_chat(_, info, user_id, chat_id):
         db.session.rollback()
         return {"success": False, "message": f"Error: {str(e)}"}
 
+
 @mutation.field("extractPDFText")
 def resolve_extract_pdf_text(_, info, username, file):
-    import fitz
-    from app.pinecone_client import upsert_vectors
-    from app.embedding_helper import embed_text
-
     filename = file.filename
     file.seek(0, os.SEEK_END)
     if file.tell() > MAX_PDF_SIZE:
@@ -226,7 +231,7 @@ def resolve_extract_pdf_text(_, info, username, file):
     try:
         pdf_bytes = file.read()
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
+    except Exception:
         return {"success": False, "filename": filename, "page_count": 0, "pages": []}
 
     pages, vectors = [], []
@@ -240,9 +245,11 @@ def resolve_extract_pdf_text(_, info, username, file):
 
     doc.close()
     if vectors:
+        from app.pinecone_client import upsert_vectors
         upsert_vectors(vectors, namespace=username)
 
     return {"success": True, "filename": filename, "page_count": len(pages), "pages": pages}
+
 
 @query.field("semanticSearch")
 def resolve_semantic_search(_, info, username, query):
@@ -260,6 +267,7 @@ def resolve_semantic_search(_, info, username, query):
         })
     return semantic_results
 
+
 @query.field("getChatHistory")
 def resolve_get_chat_history(_, info, user_id):
     user = User.query.filter_by(id=user_id).first()
@@ -267,6 +275,7 @@ def resolve_get_chat_history(_, info, user_id):
         return []
     history = ChatHistory.query.filter_by(user_id=user_id).order_by(ChatHistory.id.asc()).all()
     return [{"id": h.id, "role": h.role, "content": h.content, "created_at": h.created_at, "updated_at": h.updated_at, "chat_id": h.chat_id} for h in history]
+
 
 @mutation.field("styleTransfer")
 def resolve_style_transfer(_, info, file, style):
@@ -282,22 +291,23 @@ def resolve_style_transfer(_, info, file, style):
         return {"imageUrl": "", "message": f"Failed: {e}"}
 
 
-
-
+@mutation.field("googleAuth")
 def resolve_google_auth(_, info, token):
     try:
         idinfo = id_token.verify_oauth2_token(token, google_requests.Request(), YOUR_GOOGLE_CLIENT_ID)
+
         email = idinfo.get("email")
         name = idinfo.get("name")
-        google_user_id = idinfo["sub"]
+        google_user_id = idinfo.get("sub")
+        profilePic = idinfo.get("picture")
+
 
         if not email:
-            raise Exception("Google token missing email")
+            raise GraphQLError("Google token missing email")
 
-        # Query or create user in your DB (adjust according to your User model and session)
         user = User.query.filter_by(email=email).first()
         if not user:
-            user = User(email=email, google_user_id=google_user_id, name=name)
+            user = User(email=email, google_user_id=google_user_id, name=name, profile_pic=profilePic)
             db.session.add(user)
             db.session.commit()
         else:
@@ -306,13 +316,16 @@ def resolve_google_auth(_, info, token):
             db.session.commit()
 
         access_token = create_access_token(identity=user.id)
-
+        print("user",user)
         return {
             "accessToken": access_token,
             "user": user
         }
-    except ValueError:
-        raise Exception("Invalid Google token")
+
+    except ValueError as e:
+        raise GraphQLError(f"Invalid Google token: {str(e)}")
+    except Exception as e:
+        raise GraphQLError(f"Authentication error: {str(e)}")
 
 
 schema = make_executable_schema(type_defs, [query, mutation, upload_scalar, datetime_scalar])

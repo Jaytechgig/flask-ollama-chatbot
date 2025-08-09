@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
 from flask_migrate import Migrate
 from flask_cors import CORS
+from flask_jwt_extended import JWTManager   # ✅ Added
 from app.models import db, User, ChatHistory
 from app.pdf_upload import pdf_bp
 from app.pinecone_client import semantic_search
@@ -21,12 +22,17 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 my_app = Flask(__name__)
 CORS(my_app)
 
-# Configure DB
+# ==== Database Config ====
 my_app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///database.db"
 my_app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
     "connect_args": {"check_same_thread": False}
 }
 
+# ==== JWT Config ====
+my_app.config["JWT_SECRET_KEY"] = "ec6ee19cd05235658e80cc2c5f16f21e8f21d0a2628bd7c7056839b3d7870f20"  # CHANGE in production!
+jwt = JWTManager(my_app)  # ✅ Initialize JWT Manager
+
+# ==== DB Init ====
 db.init_app(my_app)
 migrate = Migrate(my_app, db)
 my_app.register_blueprint(pdf_bp)
@@ -34,6 +40,7 @@ my_app.register_blueprint(pdf_bp)
 with my_app.app_context():
     db.create_all()
 
+# ==== Routes ====
 @my_app.route("/")
 def index():
     return "✅ Hello, your Flask dev server is running!"
@@ -81,30 +88,19 @@ def stream_chat():
                     "model": MODEL_NAME,
                     "messages": messages,
                     "stream": True,
-                    "options": {
-                        "num_predict": 200,
-                        "temperature": 0.7
-                    }
+                    "options": {"num_predict": 200, "temperature": 0.7}
                 },
                 stream=True
             )
 
             full_reply = ""
-
             for line in response.iter_lines():
                 if not line:
                     continue
-
                 decoded = line.decode("utf-8")
-
-                # Print for debugging
                 print("📩 Ollama line:", decoded)
 
-                if decoded.startswith("data: "):
-                    json_str = decoded[6:]
-                else:
-                    json_str = decoded
-
+                json_str = decoded[6:] if decoded.startswith("data: ") else decoded
                 try:
                     chunk = json.loads(json_str)
                     token = chunk.get("message", {}).get("content", "")
